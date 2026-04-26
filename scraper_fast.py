@@ -88,6 +88,7 @@ class SigLIPEmbedder:
     
     def embed_text(self, text: str) -> Optional[list]:
         try:
+            text = text[:500]
             inp = self.processor(text=text, return_tensors="pt")
             inp = {k: v.to(self.device) for k, v in inp.items()}
             with torch.no_grad():
@@ -226,6 +227,7 @@ def get_existing_products(supabase) -> dict:
 def batch_upsert(supabase, products: list) -> dict:
     """Insert/update products in batches with retry logic"""
     results = {'success': 0, 'failed': 0, 'failed_ids': []}
+    timestamp = datetime.utcnow().isoformat()
     
     for i in range(0, len(products), BATCH_SIZE):
         batch = products[i:i + BATCH_SIZE]
@@ -235,7 +237,7 @@ def batch_upsert(supabase, products: list) -> dict:
             try:
                 data = []
                 for p in batch:
-                    data.append({
+                    record = {
                         'id': p['id'],
                         'source': p['source'],
                         'product_url': p['product_url'],
@@ -253,8 +255,8 @@ def batch_upsert(supabase, products: list) -> dict:
                         'tags': p['tags'],
                         'price': p['price'],
                         'info_embedding': p.get('info_embedding'),
-                        'updated_at': datetime.utcnow().isoformat(),
-                    })
+                    }
+                    data.append(record)
                 
                 supabase.table('products').upsert(data, on_conflict='id').execute()
                 results['success'] += len(batch)
@@ -275,22 +277,16 @@ def batch_upsert(supabase, products: list) -> dict:
 
 
 def delete_stale_products(supabase, seen_urls: Set[str]) -> int:
-    """Delete products not seen in current run (if stale for 2 runs)"""
+    """Delete products not seen in current run"""
     deleted = 0
     try:
-        result = supabase.table('products').select('id, product_url, updated_at').eq('source', SOURCE).execute()
+        result = supabase.table('products').select('id, product_url').eq('source', SOURCE).execute()
         
         for p in result.data:
             if p['product_url'] not in seen_urls:
-                updated_at = p.get('updated_at')
-                if updated_at:
-                    last_update = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
-                    days_ago = (datetime.utcnow() - last_update.replace(tzinfo=None)).days
-                    
-                    if days_ago >= 2:
-                        supabase.table('products').delete().eq('id', p['id']).execute()
-                        deleted += 1
-                        print(f"Deleted stale: {p['id']}")
+                supabase.table('products').delete().eq('id', p['id']).execute()
+                deleted += 1
+                print(f"Deleted stale: {p['id']}")
         
     except Exception as e:
         print(f"Error deleting stale: {e}")
