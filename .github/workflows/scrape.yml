@@ -26,18 +26,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install torch sentencepiece --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
       - name: Run scraper
