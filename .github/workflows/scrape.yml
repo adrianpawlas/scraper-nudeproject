@@ -1,4 +1,4 @@
-name: Nude Project Scraper
+name: Scrape
 
 on:
   schedule:
@@ -6,19 +6,6 @@ on:
     - cron: '0 18 * * 3'
     - cron: '0 18 * * 5'
   workflow_dispatch:
-    inputs:
-      test_mode:
-        description: 'Run in test mode (3 products only)'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
-      max_products:
-        description: 'Maximum number of products to scrape'
-        required: false
-        type: number
 
 jobs:
   scrape:
@@ -57,39 +44,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://yqawmzggcgpeyaaynrjk.supabase.co' }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxYXdtemdnY2dwZXlhYXlucmprIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTAxMDkyNiwiZXhwIjoyMDcwNTg2OTI2fQ.XtLpxausFriraFJeX27ZzsdQsFv3uQKXBBggoz6P4D4' }}
-        run: |
-          TEST_MODE="${{ github.event.inputs.test_mode }}"
-          MAX_PRODS="${{ github.event.inputs.max_products }}"
-          
-          if [ "$TEST_MODE" = "true" ]; then
-            echo "Running in TEST mode..."
-            python test_scraper.py
-          elif [ -n "$MAX_PRODS" ]; then
-            echo "Running with max products: $MAX_PRODS"
-            python -c "
-import sys
-sys.path.insert(0, '.')
-from scraper_fast import get_urls, extract, CATEGORY_URLS, insert
-import time
-
-total = []
-for cat_url, gender in CATEGORY_URLS:
-    cat_name = cat_url.split('/collections/')[-1]
-    print(f'Processing: {cat_name}')
-    urls = get_urls(cat_url)
-    print(f'Found {len(urls)} products')
-    for url in urls[:int('$MAX_PRODS')]:
-        p = extract(url)
-        if p:
-            p['gender'] = p['gender'] or gender
-            total.append(p)
-        time.sleep(0.1)
-    print(f'Total: {len(total)}')
-insert(total)
-            "
-          else
-            echo "Running full scrape..."
-            python scraper_fast.py
+        run: python scraper_fast.py
 
       - name: Report status
         if: always()
