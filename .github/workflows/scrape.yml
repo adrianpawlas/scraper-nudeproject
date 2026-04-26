@@ -1,52 +1,72 @@
 name: Nude Project Scraper
 
 on:
+  schedule:
+    # Sun 6pm, Wed 6pm, Fri 6pm UTC
+    - cron: '0 18 * * 0'
+    - cron: '0 18 * * 3'
+    - cron: '0 18 * * 5'
   workflow_dispatch:
     inputs:
-      mode:
-        description: 'Run mode'
-        required: true
-        default: 'full'
+      test_mode:
+        description: 'Run in test mode (3 products only)'
+        required: false
+        default: 'false'
         type: choice
         options:
-          - full
-          - test
-          - scrape-only
-  schedule:
-    - cron: '0 18 * * 0,3,5'
+          - 'true'
+          - 'false'
+      max_products:
+        description: 'Maximum number of products to scrape'
+        required: false
+        type: number
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    
+    timeout-minutes: 720
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      - name: Configure environment
+
+      - name: Install system dependencies
         run: |
-          echo "SUPABASE_URL=https://yqawmzggcgpeyaaynrjk.supabase.co" >> $GITHUB_ENV
-          echo "SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxYXdtemdnY2dwZXlhYXlucmprIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTAxMDkyNiwiZXhwIjoyMDcwNTg2OTI2fQ.XtLpxausFriraFJeX27ZzsdQsFv3uQKXBBggoz6P4D4" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Run scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      
-      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      - name: Run scraper
-        run: |
-          if [ "${{ github.event.inputs.mode }}" = "test" ]; then
+          TEST_MODE="${{ github.event.inputs.test_mode }}"
+          MAX_PRODS="${{ github.event.inputs.max_products }}"
+          
+          if [ "$TEST_MODE" = "true" ]; then
+            echo "Running in TEST mode..."
             python test_scraper.py
-          elif [ "${{ github.event.inputs.mode }}" = "scrape-only" ]; then
+          elif [ -n "$MAX_PRODS" ]; then
+            echo "Running with max products: $MAX_PRODS"
             python -c "
 import sys
 sys.path.insert(0, '.')
@@ -59,7 +79,7 @@ for cat_url, gender in CATEGORY_URLS:
     print(f'Processing: {cat_name}')
     urls = get_urls(cat_url)
     print(f'Found {len(urls)} products')
-    for url in urls[:200]:
+    for url in urls[:int('$MAX_PRODS')]:
         p = extract(url)
         if p:
             p['gender'] = p['gender'] or gender
@@ -69,12 +89,14 @@ for cat_url, gender in CATEGORY_URLS:
 insert(total)
             "
           else
+            echo "Running full scrape..."
             python scraper_fast.py
-      
+
       - name: Report status
-        if: success()
-        run: echo "Scraping completed successfully!"
-      
-      - name: Report failure
-        if: failure()
-        run: echo "Scraping failed!"
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Scraper completed successfully"
+          else
+            echo "❌ Scraper failed. Check logs for details."
+            exit 1
