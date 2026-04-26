@@ -29,12 +29,18 @@ jobs:
         with:
           python-version: '3.11'
       
+      - name: Configure environment
+        run: |
+          echo "SUPABASE_URL=https://yqawmzggcgpeyaaynrjk.supabase.co" >> $GITHUB_ENV
+          echo "SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlxYXdtemdnY2dwZXlhYXlucmprIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTAxMDkyNiwiZXhwIjoyMDcwNTg2OTI2fQ.XtLpxausFriraFJeX27ZzsdQsFv3uQKXBBggoz6P4D4" >> $GITHUB_ENV
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
       
       - name: Run scraper
         run: |
@@ -64,9 +70,6 @@ insert(total)
             "
           else
             python scraper_fast.py
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       
       - name: Report status
         if: success()
