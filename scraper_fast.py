@@ -280,7 +280,7 @@ def delete_stale_products(supabase, seen_urls: Set[str]) -> int:
     """Delete products not seen in current run"""
     deleted = 0
     try:
-        result = supabase.table('products').select('id, product_url').eq('source', SOURCE).execute()
+        result = supabase.table('products').select('id, product_url, created_at').eq('source', SOURCE).execute()
         
         for p in result.data:
             if p['product_url'] not in seen_urls:
