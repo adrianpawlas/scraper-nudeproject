@@ -171,6 +171,16 @@ def extract(url: str) -> Optional[dict]:
     prices = list(dict.fromkeys([o.get('price', '0') for o in offers]))
     sizes = list(dict.fromkeys([o.get('name', '') for o in offers if o.get('name')]))
     
+    if prices:
+        price_val = prices[0].replace(',', '.').strip()
+        try:
+            price_float = float(price_val)
+            formatted_price = f"{price_float:.2f}EUR"
+        except:
+            formatted_price = prices[0]
+    else:
+        formatted_price = '0'
+    
     category = pd.get('category', '')
     if not category:
         try:
@@ -207,7 +217,7 @@ def extract(url: str) -> Optional[dict]:
         'gender': gender,
         'metadata': metadata,
         'size': ', '.join(sizes),
-        'price': prices[0] if prices else '0',
+        'price': formatted_price,
         'tags': tags,
     }
 
@@ -251,7 +261,7 @@ def batch_upsert(supabase, products: list) -> dict:
                         'size': p['size'],
                         'second_hand': False,
                         'image_embedding': p.get('image_embedding'),
-                        'country': 'ES',
+                        'country': None,
                         'tags': p['tags'],
                         'price': p['price'],
                         'info_embedding': p.get('info_embedding'),
