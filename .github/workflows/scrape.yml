@@ -14,7 +14,6 @@ on:
           - scrape-only
   schedule:
     - cron: '0 18 * * 0,3,5'
-    cron: midnight on Sunday (0), Wednesday (3), and Friday (5) = 6PM
 
 jobs:
   scrape:
