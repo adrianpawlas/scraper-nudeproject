@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Nude Project Scraper - Optimized with batch processing and progress saving"""
+"""Nude Project Scraper - With smart batch processing, stale detection, and embedding optimization"""
 
 import os
 import re
 import json
 import time
+import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Set
 from urllib.parse import urljoin
+
 import requests
 from bs4 import BeautifulSoup
 import torch
@@ -51,6 +53,12 @@ SESSION.headers.update({
     "Accept-Language": "en-US,en;q=0.5",
 })
 
+BATCH_SIZE = 50
+EMBED_DELAY = 0.5
+MAX_RETRIES = 3
+
+logging.basicConfig(filename="scraper.log", level=logging.INFO)
+
 
 class SigLIPEmbedder:
     def __init__(self):
@@ -60,10 +68,10 @@ class SigLIPEmbedder:
         self.processor = AutoProcessor.from_pretrained("google/siglip-base-patch16-384")
         self.model.eval()
     
-    def _normalize(self, emb):
+    def _normalize(self, emb: torch.Tensor) -> torch.Tensor:
         return emb / (torch.sqrt((emb ** 2).sum(-1, keepdim=True)) + 1e-8)
     
-    def embed_image(self, url):
+    def embed_image(self, url: str) -> Optional[list]:
         try:
             r = SESSION.get(url, timeout=20)
             r.raise_for_status()
@@ -78,7 +86,7 @@ class SigLIPEmbedder:
             print(f"Img error: {e}")
             return None
     
-    def embed_text(self, text):
+    def embed_text(self, text: str) -> Optional[list]:
         try:
             inp = self.processor(text=text, return_tensors="pt")
             inp = {k: v.to(self.device) for k, v in inp.items()}
@@ -91,7 +99,7 @@ class SigLIPEmbedder:
             return None
 
 
-def get_urls(category_url):
+def get_urls(category_url: str) -> list:
     urls = []
     page = 1
     while page <= 50:
@@ -121,7 +129,7 @@ def get_urls(category_url):
     return urls
 
 
-def extract(url):
+def extract(url: str) -> Optional[dict]:
     r = SESSION.get(url, timeout=20)
     if r.status_code != 200:
         return None
@@ -188,76 +196,208 @@ def extract(url):
     
     return {
         'id': f'nudeproject-{handle}',
-        'source': SOURCE, 'product_url': url, 'affiliate_url': None,
-        'image_url': main_image, 'brand': vendor, 'title': title,
-        'description': desc, 'category': category, 'gender': gender,
-        'metadata': metadata, 'size': ', '.join(sizes),
-        'second_hand': False, 'image_embedding': None,
-        'country': 'ES', 'compressed_image_url': None, 'tags': tags,
-        'price': prices[0] if prices else '0', 'sale': None,
-        'additional_images': None, 'info_embedding': None,
+        'source': SOURCE,
+        'product_url': url,
+        'image_url': main_image,
+        'brand': vendor,
+        'title': title,
+        'description': desc,
+        'category': category,
+        'gender': gender,
+        'metadata': metadata,
+        'size': ', '.join(sizes),
+        'price': prices[0] if prices else '0',
+        'tags': tags,
     }
 
 
-def insert(products):
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    count = 0
-    for p in products:
-        try:
-            data = {
-                'id': p['id'], 'source': p['source'], 'product_url': p['product_url'],
-                'image_url': p['image_url'], 'brand': p['brand'], 'title': p['title'],
-                'description': p['description'], 'category': p['category'], 'gender': p['gender'],
-                'metadata': p['metadata'], 'size': p['size'], 'second_hand': p['second_hand'],
-                'image_embedding': p['image_embedding'], 'country': p['country'],
-                'tags': p['tags'], 'price': p['price'], 'sale': p['sale'],
-                'additional_images': p['additional_images'], 'info_embedding': p['info_embedding'],
-            }
-            supabase.table('products').upsert(data, on_conflict='id').execute()
-            count += 1
-        except Exception as e:
-            print(f"Insert error: {e}")
-    return count
+def get_existing_products(supabase) -> dict:
+    """Fetch all existing products for this source"""
+    existing = {}
+    try:
+        result = supabase.table('products').select('id, product_url, title, image_url, price, created_at').eq('source', SOURCE).execute()
+        for p in result.data:
+            existing[p['product_url']] = p
+    except Exception as e:
+        print(f"Error fetching existing: {e}")
+    return existing
+
+
+def batch_upsert(supabase, products: list) -> dict:
+    """Insert/update products in batches with retry logic"""
+    results = {'success': 0, 'failed': 0, 'failed_ids': []}
+    
+    for i in range(0, len(products), BATCH_SIZE):
+        batch = products[i:i + BATCH_SIZE]
+        retry_count = 0
+        
+        while retry_count < MAX_RETRIES:
+            try:
+                data = []
+                for p in batch:
+                    data.append({
+                        'id': p['id'],
+                        'source': p['source'],
+                        'product_url': p['product_url'],
+                        'image_url': p['image_url'],
+                        'brand': p['brand'],
+                        'title': p['title'],
+                        'description': p['description'],
+                        'category': p['category'],
+                        'gender': p['gender'],
+                        'metadata': p['metadata'],
+                        'size': p['size'],
+                        'second_hand': False,
+                        'image_embedding': p.get('image_embedding'),
+                        'country': 'ES',
+                        'tags': p['tags'],
+                        'price': p['price'],
+                        'info_embedding': p.get('info_embedding'),
+                        'updated_at': datetime.utcnow().isoformat(),
+                    })
+                
+                supabase.table('products').upsert(data, on_conflict='id').execute()
+                results['success'] += len(batch)
+                break
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= MAX_RETRIES:
+                    print(f"Batch failed after {MAX_RETRIES} retries: {e}")
+                    for p in batch:
+                        results['failed'] += 1
+                        results['failed_ids'].append(p['id'])
+                        logging.error(f"Failed product: {p['id']} - {e}")
+                else:
+                    time.sleep(1)
+    
+    return results
+
+
+def delete_stale_products(supabase, seen_urls: Set[str]) -> int:
+    """Delete products not seen in current run (if stale for 2 runs)"""
+    deleted = 0
+    try:
+        result = supabase.table('products').select('id, product_url, updated_at').eq('source', SOURCE).execute()
+        
+        for p in result.data:
+            if p['product_url'] not in seen_urls:
+                updated_at = p.get('updated_at')
+                if updated_at:
+                    last_update = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                    days_ago = (datetime.utcnow() - last_update.replace(tzinfo=None)).days
+                    
+                    if days_ago >= 2:
+                        supabase.table('products').delete().eq('id', p['id']).execute()
+                        deleted += 1
+                        print(f"Deleted stale: {p['id']}")
+        
+    except Exception as e:
+        print(f"Error deleting stale: {e}")
+    
+    return deleted
+
+
+def check_changed(existing_product: dict, new_product: dict) -> bool:
+    """Check if product has actually changed"""
+    if not existing_product:
+        return True
+    
+    if existing_product.get('title') != new_product.get('title'):
+        return True
+    if existing_product.get('image_url') != new_product.get('image_url'):
+        return True
+    if existing_product.get('price') != new_product.get('price'):
+        return True
+    
+    return False
 
 
 def main():
     embedder = SigLIPEmbedder()
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     
-    total_products = []
+    print("\n=== Fetching existing products ===")
+    existing = get_existing_products(supabase)
+    print(f"Found {len(existing)} existing products")
+    
+    all_products = []
+    seen_urls = set()
     
     for cat_url, gender in CATEGORY_URLS:
         cat_name = cat_url.split('/collections/')[-1]
-        print(f"\n{'='*50}")
-        print(f"Processing: {cat_name}")
-        print(f"{'='*50}")
+        print(f"\n=== Processing: {cat_name} ===")
         
         urls = get_urls(cat_url)
         print(f"Found {len(urls)} products")
         
-        for i, url in enumerate(urls):
-            print(f"  {i+1}/{len(urls)}: {url}")
+        for url in urls:
             p = extract(url)
             if p:
                 p['gender'] = p['gender'] or gender
-                total_products.append(p)
-            time.sleep(0.1)
+                all_products.append(p)
+                seen_urls.add(url)
     
-    print(f"\nTotal extracted: {len(total_products)}")
+    print(f"\nTotal scraped: {len(all_products)}")
     
-    print("\nGenerating embeddings...")
-    for i, p in enumerate(total_products):
-        print(f"  Embedding {i+1}/{len(total_products)}: {p['title']}")
+    new_count = 0
+    updated_count = 0
+    unchanged_count = 0
+    
+    products_to_insert = []
+    
+    print("\n=== Processing products ===")
+    for i, p in enumerate(all_products):
+        print(f"  {i+1}/{len(all_products)}: {p['title']}")
         
-        if p.get('image_url'):
-            p['image_embedding'] = embedder.embed_image(p['image_url'])
+        existing_p = existing.get(p['product_url'])
         
-        txt = f"{p.get('title', '')} {p.get('description', '')} {p.get('category', '')} {p.get('gender', '')} {p.get('price', '')}"
-        p['info_embedding'] = embedder.embed_text(txt)
-        time.sleep(0.1)
+        if not existing_p:
+            print(f"    NEW product")
+            new_count += 1
+            generate_embeddings = True
+        elif check_changed(existing_p, p):
+            print(f"    CHANGED - will update")
+            updated_count += 1
+            generate_embeddings = (existing_p.get('image_url') != p.get('image_url'))
+        else:
+            print(f"    UNCHANGED - skipping")
+            unchanged_count += 1
+            generate_embeddings = False
+            p['image_embedding'] = None
+            p['info_embedding'] = None
+        
+        if generate_embeddings:
+            if p.get('image_url'):
+                p['image_embedding'] = embedder.embed_image(p['image_url'])
+                time.sleep(EMBED_DELAY)
+            
+            txt = f"{p.get('title', '')} {p.get('description', '')} {p.get('category', '')} {p.get('gender', '')} {p.get('price', '')}"
+            p['info_embedding'] = embedder.embed_text(txt)
+            time.sleep(EMBED_DELAY)
+        
+        products_to_insert.append(p)
+        
+        if len(products_to_insert) >= BATCH_SIZE:
+            print(f"\n  Inserting batch of {len(products_to_insert)}...")
+            result = batch_upsert(supabase, products_to_insert)
+            products_to_insert = []
     
-    print("\nInserting to database...")
-    count = insert(total_products)
-    print(f"Completed! Inserted {count} products")
+    if products_to_insert:
+        print(f"\n  Inserting final batch of {len(products_to_insert)}...")
+        result = batch_upsert(supabase, products_to_insert)
+    
+    print("\n=== Deleting stale products ===")
+    stale_deleted = delete_stale_products(supabase, seen_urls)
+    
+    print("\n" + "="*50)
+    print("RUN SUMMARY")
+    print("="*50)
+    print(f"New products added:     {new_count}")
+    print(f"Products updated:   {updated_count}")
+    print(f"Unchanged:       {unchanged_count}")
+    print(f"Stale deleted:   {stale_deleted}")
+    print("="*50)
 
 
 if __name__ == "__main__":
