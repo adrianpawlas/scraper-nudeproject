@@ -29,7 +29,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -U sentencepiece
+          pip install -U sentencepiece protobuf
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 

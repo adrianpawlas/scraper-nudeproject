@@ -6,5 +6,6 @@ beautifulsoup4>=4.12.0
 supabase>=2.0.0
 numpy>=1.24.0
 sentencepiece
+protobuf
 accelerate>=0.20.0
 safetensors>=0.3.0
