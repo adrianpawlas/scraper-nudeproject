@@ -2,7 +2,6 @@ name: Nude Project Scraper
 
 on:
   schedule:
-    # Sun 6pm, Wed 6pm, Fri 6pm UTC
     - cron: '0 18 * * 0'
     - cron: '0 18 * * 3'
     - cron: '0 18 * * 5'
