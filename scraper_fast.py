@@ -365,7 +365,7 @@ def main():
         elif check_changed(existing_p, p):
             print(f"    CHANGED - will update")
             updated_count += 1
-            generate_embeddings = (existing_p.get('image_url') != p.get('image_url'))
+            generate_embeddings = True
         else:
             print(f"    UNCHANGED - skipping")
             unchanged_count += 1
