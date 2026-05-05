@@ -386,12 +386,14 @@ def main():
         
         if len(products_to_insert) >= BATCH_SIZE:
             print(f"\n  Inserting batch of {len(products_to_insert)}...")
-            result = batch_upsert(supabase, products_to_insert)
+            unique_products = {p['id']: p for p in products_to_insert}.values()
+            result = batch_upsert(supabase, list(unique_products))
             products_to_insert = []
     
     if products_to_insert:
         print(f"\n  Inserting final batch of {len(products_to_insert)}...")
-        result = batch_upsert(supabase, products_to_insert)
+        unique_products = {p['id']: p for p in products_to_insert}.values()
+        result = batch_upsert(supabase, list(unique_products))
     
     print("\n=== Deleting stale products ===")
     stale_deleted = delete_stale_products(supabase, seen_urls)
