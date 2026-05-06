@@ -101,7 +101,8 @@ class SigLIPEmbedder:
     
     def embed_text(self, text: str) -> Optional[list]:
         try:
-            text = text[:500]
+            words = text.split()[:50]
+            text = ' '.join(words)
             inp = self.processor(text=text, return_tensors="pt")
             inp = {k: v.to(self.device) for k, v in inp.items()}
             with torch.no_grad():
@@ -275,18 +276,7 @@ def get_existing_products(supabase) -> dict:
 
 def save_seen_products(supabase, seen_urls: Set[str]):
     """Save current run's seen URLs for tracking consecutive runs"""
-    run_id = datetime.utcnow().strftime('%Y%m%d')
-    try:
-        for url in seen_urls:
-            supabase.table('scraper_runs').upsert({
-                'id': f'{SOURCE}-{url}',
-                'source': SOURCE,
-                'product_url': url,
-                'last_seen': datetime.utcnow().isoformat(),
-                'run_date': run_id
-            }, on_conflict='id').execute()
-    except Exception as e:
-        print(f"Could not save run tracking (table may not exist): {e}")
+    pass
 
 
 def batch_upsert(supabase, products: list) -> dict:
@@ -320,10 +310,7 @@ def batch_upsert(supabase, products: list) -> dict:
                         'tags': p['tags'],
                         'price': p['price'],
                         'info_embedding': p.get('info_embedding'),
-                        'updated_at': datetime.utcnow().isoformat(),
                     }
-                    if p.get('is_new'):
-                        record['created_at'] = datetime.utcnow().isoformat()
                     data.append(record)
                 
                 supabase.table('products').upsert(data, on_conflict='id').execute()
@@ -345,18 +332,13 @@ def batch_upsert(supabase, products: list) -> dict:
 
 
 def delete_stale_products(supabase, seen_urls: Set[str]) -> int:
-    """Delete products not seen in current run AND not seen in previous run"""
+    """Delete products not seen in current run"""
     deleted = 0
-    run_id = datetime.utcnow().strftime('%Y%m%d')
-    
     try:
-        runs_result = supabase.table('scraper_runs').select('product_url').eq('source', SOURCE).neq('run_date', run_id).execute()
-        previous_urls = {r['product_url'] for r in runs_result.data}
-        
-        result = supabase.table('products').select('id, product_url, created_at').eq('source', SOURCE).execute()
+        result = supabase.table('products').select('id, product_url').eq('source', SOURCE).execute()
         
         for p in result.data:
-            if p['product_url'] not in seen_urls and p['product_url'] not in previous_urls:
+            if p['product_url'] not in seen_urls:
                 supabase.table('products').delete().eq('id', p['id']).execute()
                 deleted += 1
                 print(f"Deleted stale: {p['id']}")
