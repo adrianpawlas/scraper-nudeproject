@@ -246,10 +246,6 @@ def extract(url: str) -> Optional[dict]:
         'category': category, 'prices': prices, 'sizes': sizes, 'tags': tags,
     })
     
-    if not main_image:
-        print(f"  No image found, skipping: {url}")
-        return None
-    
     return {
         'id': f'nudeproject-{handle}',
         'source': SOURCE,
