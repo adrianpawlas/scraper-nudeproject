@@ -11,6 +11,8 @@ from typing import Optional, Set
 from urllib.parse import urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import torch
 from PIL import Image
@@ -46,7 +48,13 @@ CATEGORY_URLS = [
     ("https://nude-project.com/collections/womens-exclusive-outerwear", "women"),
 ]
 
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 SESSION = requests.Session()
+retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+SESSION.mount('http://', HTTPAdapter(max_retries=retries))
+SESSION.mount('https://', HTTPAdapter(max_retries=retries))
 SESSION.headers.update({
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     "Accept": "text/html,application/xhtml+xml",
@@ -72,19 +80,24 @@ class SigLIPEmbedder:
         return emb / (torch.sqrt((emb ** 2).sum(-1, keepdim=True)) + 1e-8)
     
     def embed_image(self, url: str) -> Optional[list]:
-        try:
-            r = SESSION.get(url, timeout=20)
-            r.raise_for_status()
-            img = Image.open(io.BytesIO(r.content)).convert("RGB")
-            inp = self.processor(images=img, return_tensors="pt")
-            inp = {k: v.to(self.device) for k, v in inp.items()}
-            with torch.no_grad():
-                out = self.model.get_image_features(**inp)
-                emb = self._normalize(out.pooler_output)
-            return emb.squeeze().cpu().numpy().tolist()
-        except Exception as e:
-            print(f"Img error: {e}")
-            return None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                r = SESSION.get(url, timeout=20)
+                r.raise_for_status()
+                img = Image.open(io.BytesIO(r.content)).convert("RGB")
+                inp = self.processor(images=img, return_tensors="pt")
+                inp = {k: v.to(self.device) for k, v in inp.items()}
+                with torch.no_grad():
+                    out = self.model.get_image_features(**inp)
+                    emb = self._normalize(out.pooler_output)
+                return emb.squeeze().cpu().numpy().tolist()
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"Img error: {e}")
+                    return None
+                time.sleep(1)
+                continue
     
     def embed_text(self, text: str) -> Optional[list]:
         try:
@@ -103,11 +116,27 @@ class SigLIPEmbedder:
 def get_urls(category_url: str) -> list:
     urls = []
     page = 1
+    max_retries = 3
+    
     while page <= 50:
         url = category_url if page == 1 else f"{category_url}?page={page}"
-        r = SESSION.get(url, timeout=20)
+        
+        for attempt in range(max_retries):
+            try:
+                r = SESSION.get(url, timeout=20)
+                if r.status_code != 200:
+                    break
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"  Failed after {max_retries} attempts, skipping page {page}")
+                    return urls
+                time.sleep(2)
+                continue
+        
         if r.status_code != 200:
             break
+            
         soup = BeautifulSoup(r.text, "html.parser")
         links = soup.select('a[href*="/products/"]')
         
@@ -131,9 +160,19 @@ def get_urls(category_url: str) -> list:
 
 
 def extract(url: str) -> Optional[dict]:
-    r = SESSION.get(url, timeout=20)
-    if r.status_code != 200:
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            r = SESSION.get(url, timeout=20)
+            if r.status_code != 200:
+                return None
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"  Failed to fetch after {max_retries} attempts: {url}")
+                return None
+            time.sleep(2)
+            continue
     
     matches = re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.+?)</script>', r.text, re.DOTALL)
     pd = {}
