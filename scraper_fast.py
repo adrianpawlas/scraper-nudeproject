@@ -27,32 +27,32 @@ SOURCE = "scraper-nudeproject"
 BRAND = "Nude Project"
 
 CATEGORY_URLS = [
-    ("https://nude-project.com/collections/accessories", None),
-    ("https://nude-project.com/collections/t-shirts", None),
-    ("https://nude-project.com/collections/shirts-polos", None),
-    ("https://nude-project.com/collections/hoodies", None),
-    ("https://nude-project.com/collections/knitwear", None),
-    ("https://nude-project.com/collections/jeans", "men"),
-    ("https://nude-project.com/collections/pants", None),
-    ("https://nude-project.com/collections/shorts", "men"),
-    ("https://nude-project.com/collections/swimwear", "men"),
-    ("https://nude-project.com/collections/outerwear", None),
-    ("https://nude-project.com/collections/womens-exclusive-tops-t-shirts", "women"),
-    ("https://nude-project.com/collections/womens-exclusive-bags-leather-goods", "women"),
-    ("https://nude-project.com/collections/womens-knitwear-sweatshirts", "women"),
-    ("https://nude-project.com/collections/womens-swimwear", "women"),
-    ("https://nude-project.com/collections/womens-exclusive-bottoms", "women"),
-    ("https://nude-project.com/collections/womens-jewelry", "women"),
-    ("https://nude-project.com/collections/womens-exclusive-accessories", "women"),
-    ("https://nude-project.com/collections/womens-underwear", "women"),
-    ("https://nude-project.com/collections/womens-exclusive-outerwear", "women"),
+    ('https://nude-project.com/collections/accessories', None),
+    ('https://nude-project.com/collections/t-shirts', None),
+    ('https://nude-project.com/collections/shirts-polos', None),
+    ('https://nude-project.com/collections/hoodies', None),
+    ('https://nude-project.com/collections/knitwear', None),
+    ('https://nude-project.com/collections/jeans', 'men'),
+    ('https://nude-project.com/collections/pants', None),
+    ('https://nude-project.com/collections/shorts', 'men'),
+    ('https://nude-project.com/collections/swimwear', 'men'),
+    ('https://nude-project.com/collections/outerwear', None),
+    ('https://nude-project.com/collections/womens-exclusive-tops-t-shirts', 'women'),
+    ('https://nude-project.com/collections/womens-exclusive-bags-leather-goods', 'women'),
+    ('https://nude-project.com/collections/womens-knitwear-sweatshirts', 'women'),
+    ('https://nude-project.com/collections/womens-swimwear', 'women'),
+    ('https://nude-project.com/collections/womens-exclusive-bottoms', 'women'),
+    ('https://nude-project.com/collections/womens-jewelry', 'women'),
+    ('https://nude-project.com/collections/womens-exclusive-accessories', 'women'),
+    ('https://nude-project.com/collections/womens-underwear', 'women'),
+    ('https://nude-project.com/collections/womens-exclusive-outerwear', 'women'),
 ]
 
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 SESSION = requests.Session()
-retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+retries = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
 SESSION.mount('http://', HTTPAdapter(max_retries=retries))
 SESSION.mount('https://', HTTPAdapter(max_retries=retries))
 SESSION.headers.update({
@@ -60,6 +60,9 @@ SESSION.headers.update({
     "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "en-US,en;q=0.5",
 })
+
+def get_session():
+    return SESSION
 
 BATCH_SIZE = 50
 EMBED_DELAY = 0.5
@@ -83,7 +86,7 @@ class SigLIPEmbedder:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                r = SESSION.get(url, timeout=20)
+                r = get_session().get(url, timeout=20)
                 r.raise_for_status()
                 img = Image.open(io.BytesIO(r.content)).convert("RGB")
                 inp = self.processor(images=img, return_tensors="pt")
@@ -124,7 +127,7 @@ def get_urls(category_url: str) -> list:
         
         for attempt in range(max_retries):
             try:
-                r = SESSION.get(url, timeout=20)
+                r = get_session().get(url, timeout=20)
                 if r.status_code != 200:
                     break
                 break
@@ -164,7 +167,7 @@ def extract(url: str) -> Optional[dict]:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            r = SESSION.get(url, timeout=20)
+            r = get_session().get(url, timeout=20)
             if r.status_code != 200:
                 return None
             break
@@ -266,7 +269,7 @@ def get_existing_products(supabase) -> dict:
     """Fetch all existing products for this source"""
     existing = {}
     try:
-        result = supabase.table('products').select('id, product_url, title, image_url, price, created_at, updated_at').eq('source', SOURCE).execute()
+        result = supabase.table('products').select('id, product_url, title, image_url, price').eq('source', SOURCE).execute()
         for p in result.data:
             existing[p['product_url']] = p
     except Exception as e:
@@ -458,4 +461,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
