@@ -115,6 +115,7 @@ class SigLIPEmbedder:
 
 def get_urls(category_url: str) -> list:
     urls = []
+    url_set = set()
     page = 1
     max_retries = 3
     
@@ -140,18 +141,19 @@ def get_urls(category_url: str) -> list:
         soup = BeautifulSoup(r.text, "html.parser")
         links = soup.select('a[href*="/products/"]')
         
-        new_urls = set()
+        new_urls = []
         for l in links:
             h = l.get("href", "")
-            if "/products/" in h and h not in urls:
+            if "/products/" in h:
                 full = urljoin("https://nude-project.com", h)
-                if full.startswith("https://nude-project.com"):
-                    new_urls.add(full)
+                if full.startswith("https://nude-project.com") and full not in url_set:
+                    url_set.add(full)
+                    new_urls.append(full)
         
         if not new_urls:
             break
             
-        urls.extend(list(new_urls))
+        urls.extend(new_urls)
         print(f"  Page {page}: {len(new_urls)} new URLs (total: {len(urls)})")
         page += 1
         time.sleep(0.2)

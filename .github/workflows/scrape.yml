@@ -45,7 +45,8 @@ jobs:
         if: always()
         run: |
           if [ "${{ job.status }}" = "success" ]; then
-            echo "✅ Scraper completed successfully"
+            echo "Scraper completed successfully"
           else
-            echo "❌ Scraper failed. Check logs for details."
+            echo "Scraper failed. Check logs for details."
             exit 1
+          fi
