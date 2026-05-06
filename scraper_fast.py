@@ -267,12 +267,28 @@ def get_existing_products(supabase) -> dict:
     """Fetch all existing products for this source"""
     existing = {}
     try:
-        result = supabase.table('products').select('id, product_url, title, image_url, price, created_at').eq('source', SOURCE).execute()
+        result = supabase.table('products').select('id, product_url, title, image_url, price, created_at, updated_at').eq('source', SOURCE).execute()
         for p in result.data:
             existing[p['product_url']] = p
     except Exception as e:
         print(f"Error fetching existing: {e}")
     return existing
+
+
+def save_seen_products(supabase, seen_urls: Set[str]):
+    """Save current run's seen URLs for tracking consecutive runs"""
+    run_id = datetime.utcnow().strftime('%Y%m%d')
+    try:
+        for url in seen_urls:
+            supabase.table('scraper_runs').upsert({
+                'id': f'{SOURCE}-{url}',
+                'source': SOURCE,
+                'product_url': url,
+                'last_seen': datetime.utcnow().isoformat(),
+                'run_date': run_id
+            }, on_conflict='id').execute()
+    except Exception as e:
+        print(f"Could not save run tracking (table may not exist): {e}")
 
 
 def batch_upsert(supabase, products: list) -> dict:
@@ -306,7 +322,10 @@ def batch_upsert(supabase, products: list) -> dict:
                         'tags': p['tags'],
                         'price': p['price'],
                         'info_embedding': p.get('info_embedding'),
+                        'updated_at': datetime.utcnow().isoformat(),
                     }
+                    if p.get('is_new'):
+                        record['created_at'] = datetime.utcnow().isoformat()
                     data.append(record)
                 
                 supabase.table('products').upsert(data, on_conflict='id').execute()
@@ -328,19 +347,27 @@ def batch_upsert(supabase, products: list) -> dict:
 
 
 def delete_stale_products(supabase, seen_urls: Set[str]) -> int:
-    """Delete products not seen in current run"""
+    """Delete products not seen in current run AND not seen in previous run"""
     deleted = 0
+    run_id = datetime.utcnow().strftime('%Y%m%d')
+    
     try:
+        runs_result = supabase.table('scraper_runs').select('product_url').eq('source', SOURCE).neq('run_date', run_id).execute()
+        previous_urls = {r['product_url'] for r in runs_result.data}
+        
         result = supabase.table('products').select('id, product_url, created_at').eq('source', SOURCE).execute()
         
         for p in result.data:
-            if p['product_url'] not in seen_urls:
+            if p['product_url'] not in seen_urls and p['product_url'] not in previous_urls:
                 supabase.table('products').delete().eq('id', p['id']).execute()
                 deleted += 1
                 print(f"Deleted stale: {p['id']}")
         
+        save_seen_products(supabase, seen_urls)
+        
     except Exception as e:
         print(f"Error deleting stale: {e}")
+        save_seen_products(supabase, seen_urls)
     
     return deleted
 
@@ -398,6 +425,7 @@ def main():
         print(f"  {i+1}/{len(all_products)}: {p['title']}")
         
         existing_p = existing.get(p['product_url'])
+        p['is_new'] = not existing_p
         
         if not existing_p:
             print(f"    NEW product")
@@ -413,6 +441,7 @@ def main():
             generate_embeddings = False
             p['image_embedding'] = None
             p['info_embedding'] = None
+            products_to_insert.append(p)
         
         if generate_embeddings:
             if p.get('image_url'):
@@ -422,8 +451,7 @@ def main():
             txt = f"{p.get('title', '')} {p.get('description', '')} {p.get('category', '')} {p.get('gender', '')} {p.get('price', '')}"
             p['info_embedding'] = embedder.embed_text(txt)
             time.sleep(EMBED_DELAY)
-        
-        products_to_insert.append(p)
+            products_to_insert.append(p)
         
         if len(products_to_insert) >= BATCH_SIZE:
             print(f"\n  Inserting batch of {len(products_to_insert)}...")
