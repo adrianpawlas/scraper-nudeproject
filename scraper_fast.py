@@ -127,7 +127,11 @@ def get_urls(category_url: str) -> list:
         
         for attempt in range(max_retries):
             try:
-                r = get_session().get(url, timeout=20)
+                r = requests.get(
+                    url,
+                    timeout=20,
+                    headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", "Accept-Language": "en-US,en;q=0.5", "Accept": "text/html,application/xhtml+xml"}
+                )
                 if r.status_code != 200:
                     break
                 break
@@ -167,7 +171,11 @@ def extract(url: str) -> Optional[dict]:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            r = get_session().get(url, timeout=20)
+            r = requests.get(
+                url,
+                timeout=20,
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", "Accept-Language": "en-US,en;q=0.5", "Accept": "text/html,application/xhtml+xml"}
+            )
             if r.status_code != 200:
                 return None
             break
@@ -394,6 +402,7 @@ def main():
                 p['gender'] = p['gender'] or gender
                 all_products.append(p)
                 seen_urls.add(url)
+        time.sleep(1)
     
     print(f"\nTotal scraped: {len(all_products)}")
     
@@ -421,10 +430,7 @@ def main():
         else:
             print(f"    UNCHANGED - skipping")
             unchanged_count += 1
-            generate_embeddings = False
-            p['image_embedding'] = None
-            p['info_embedding'] = None
-            products_to_insert.append(p)
+            continue
         
         if generate_embeddings:
             if p.get('image_url'):
